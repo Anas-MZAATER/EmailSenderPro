@@ -1,0 +1,22 @@
+Hello,
+
+Great news! 
+EmailSenderPro_v1 has completed another email mission.
+
+Campaign report:
+Recipients        : 2
+Messages sent     : 2
+Failed            : 0
+Spam folder visits: Hopefully 0 😄
+Time saved        : Enough to drink a coffee ☕
+Application       : HAPPY
+Everything works perfectly.
+
+🚨🚨 Developer Note:
+(Please do not restart the computer.
+It might wake up the bugs. 🐞)
+
+Best regards,
+Anas Mzaater
+GitHub   : https://github.com/Anas-MZAATER
+LinkedIn : https://www.linkedin.com/in/anas-m-0b74821aa/
