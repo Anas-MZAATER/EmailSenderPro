@@ -1,4 +1,4 @@
-"""Main email sender GUI dashboard — listbox attachments + tooltips."""
+"""Main email sender GUI dashboard — 2-column layout."""
 import logging
 import os
 import threading
@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class Dashboard(tk.Tk):
-    """Main application dashboard with listbox attachments and help tooltips."""
-
     def __init__(self):
         super().__init__()
         self.title("EmailSenderPro - Dashboard")
@@ -31,32 +29,25 @@ class Dashboard(tk.Tk):
 
         self._build_ui()
         self._load_defaults()
-        self._load_smtp_auto()
-        self._check_first_run()
+        self.after(100, self._load_smtp_auto)
+        self.after(200, self._check_first_run)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=2)
         self.rowconfigure(0, weight=1)
 
-        # ========== LEFT COLUMN ==========
+        # LEFT COLUMN
         left = tk.Frame(self, padx=15, pady=10)
         left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
 
-        # Header
-        tk.Label(
-            left,
-            text="EmailSenderPro Dashboard",
-            font=("Segoe UI", 17, "bold"),
-            fg="#2c3e50",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        tk.Label(left, text="EmailSenderPro Dashboard", font=("Segoe UI", 17, "bold"), fg="#2c3e50").grid(row=0, column=0, sticky="w", pady=(0, 12))
 
         # Recipients
         r_frame = tk.LabelFrame(left, text="Recipients", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
         r_frame.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         r_frame.columnconfigure(0, weight=1)
-
         self.recipient_path = tk.StringVar()
         tk.Entry(r_frame, textvariable=self.recipient_path, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="ew", ipady=2)
         tk.Button(r_frame, text="Browse", command=self._browse_recipients, width=8).grid(row=0, column=1, padx=(5, 0))
@@ -66,12 +57,10 @@ class Dashboard(tk.Tk):
         m_frame.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         m_frame.columnconfigure(1, weight=1)
 
-        # Subject
         tk.Label(m_frame, text="Subject:", font=("Segoe UI", 9), anchor="w").grid(row=0, column=0, sticky="w")
         self.subject_var = tk.StringVar()
         tk.Entry(m_frame, textvariable=self.subject_var, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="ew", ipady=2, pady=(0, 4))
 
-        # Body file
         tk.Label(m_frame, text="Body file:", font=("Segoe UI", 9), anchor="w").grid(row=1, column=0, sticky="w")
         bf = tk.Frame(m_frame)
         bf.grid(row=1, column=1, sticky="ew", pady=(0, 4))
@@ -81,17 +70,15 @@ class Dashboard(tk.Tk):
         tk.Entry(bf, textvariable=self.body_file_path, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="ew", ipady=2)
         tk.Button(bf, text="Browse", command=self._browse_body, width=8).grid(row=0, column=1, padx=(5, 0))
 
-        # Body text
         tk.Label(m_frame, text="Or type / edit body here:", font=("Segoe UI", 8), fg="#7f8c8d", anchor="w").grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 2))
-        self.body_text = scrolledtext.ScrolledText(
-            m_frame, height=6, font=("Segoe UI", 10), wrap=tk.WORD, relief=tk.SUNKEN, bd=1
-        )
+        self.body_text = scrolledtext.ScrolledText(m_frame, height=6, font=("Segoe UI", 10), wrap=tk.WORD, relief=tk.SUNKEN, bd=1)
         self.body_text.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 5))
 
-        # Attachments — LISTBOX STYLE
+        # Attachments — LISTBOX
         a_frame = tk.LabelFrame(left, text="Attachments", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
         a_frame.grid(row=3, column=0, sticky="ew", pady=(0, 6))
         a_frame.columnconfigure(0, weight=1)
+        a_frame.rowconfigure(0, weight=1)
 
         self.attachments_list = tk.Listbox(a_frame, height=3, font=("Segoe UI", 9), selectmode=tk.SINGLE)
         self.attachments_list.grid(row=0, column=0, rowspan=2, sticky="nsew", pady=(0, 4))
@@ -120,47 +107,39 @@ class Dashboard(tk.Tk):
         o_frame = tk.LabelFrame(left, text="Options", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
         o_frame.grid(row=5, column=0, sticky="ew", pady=(0, 4))
 
-        # Delays
         df = tk.Frame(o_frame)
         df.pack(fill=tk.X, pady=(0, 4))
         tk.Label(df, text="Min delay (s):", font=("Segoe UI", 9), width=11, anchor="w").pack(side=tk.LEFT)
-        self.min_delay_var = tk.StringVar(value="300")
+        self.min_delay_var = tk.StringVar(value="60")
         tk.Entry(df, textvariable=self.min_delay_var, width=7, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(df, text="Max delay (s):", font=("Segoe UI", 9), width=11, anchor="w").pack(side=tk.LEFT)
-        self.max_delay_var = tk.StringVar(value="600")
+        self.max_delay_var = tk.StringVar(value="300")
         tk.Entry(df, textvariable=self.max_delay_var, width=7, font=("Segoe UI", 9)).pack(side=tk.LEFT)
 
-        # Checkboxes with tooltips
         cf = tk.Frame(o_frame)
         cf.pack(fill=tk.X, pady=(3, 0))
-
         self.html_var = tk.BooleanVar(value=False)
         tk.Checkbutton(cf, text="HTML", variable=self.html_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
-
         self.dry_run_var = tk.BooleanVar(value=True)
         tk.Checkbutton(cf, text="Dry Run", variable=self.dry_run_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
-
         self.resume_var = tk.BooleanVar(value=True)
         tk.Checkbutton(cf, text="Resume", variable=self.resume_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
-
         self.shuffle_var = tk.BooleanVar(value=False)
         tk.Checkbutton(cf, text="Shuffle", variable=self.shuffle_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
 
-        # Tooltips row
         tf = tk.Frame(o_frame)
         tf.pack(fill=tk.X, pady=(2, 0))
-        tk.Label(tf, text="HTML = formatted email (bold, colors, links)", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(tf, text="Dry Run = simulate sending without real delivery", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(tf, text="Resume = skip emails already sent (saved in sent.json)", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(tf, text="Shuffle = randomize recipient order", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT)
+        tk.Label(tf, text="HTML = formatted email", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Dry Run = simulate without sending", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Resume = skip already-sent emails", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Shuffle = random order", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT)
 
-        # ========== RIGHT COLUMN ==========
+        # RIGHT COLUMN
         right = tk.Frame(self, padx=10, pady=10)
         right.grid(row=0, column=1, sticky="nsew")
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        # Progress
         p_frame = tk.LabelFrame(right, text="Progress", font=("Segoe UI", 9, "bold"), padx=10, pady=8)
         p_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         p_frame.columnconfigure(0, weight=1)
@@ -169,46 +148,24 @@ class Dashboard(tk.Tk):
         ttk.Progressbar(p_frame, variable=self.progress_var, maximum=100).grid(row=0, column=0, sticky="ew", pady=(0, 5))
         self.progress_label = tk.Label(p_frame, text="Ready — 0 / 0 emails", font=("Segoe UI", 9), fg="#7f8c8d")
         self.progress_label.grid(row=1, column=0, sticky="w")
-        tk.Label(p_frame, text="Green = sent | Grey = remaining | Blue = current", font=("Segoe UI", 8), fg="#95a5a6").grid(row=2, column=0, sticky="w", pady=(2, 0))
+        tk.Label(p_frame, text="Green = sent | Grey = remaining", font=("Segoe UI", 8), fg="#95a5a6").grid(row=2, column=0, sticky="w", pady=(2, 0))
 
-        # Logs
         l_frame = tk.LabelFrame(right, text="Logs", font=("Segoe UI", 9, "bold"), padx=10, pady=8)
         l_frame.grid(row=1, column=0, sticky="nsew")
         l_frame.rowconfigure(0, weight=1)
         l_frame.columnconfigure(0, weight=1)
 
-        self.log_text = scrolledtext.ScrolledText(
-            l_frame, height=18, font=("Consolas", 9), state=tk.DISABLED, wrap=tk.WORD
-        )
+        self.log_text = scrolledtext.ScrolledText(l_frame, height=18, font=("Consolas", 9), state=tk.DISABLED, wrap=tk.WORD)
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
-        # ========== BOTTOM ACTION BAR ==========
+        # BOTTOM ACTION BAR
         bottom = tk.Frame(self, padx=15, pady=12, bg="#ecf0f1")
         bottom.grid(row=1, column=0, columnspan=2, sticky="ew")
 
-        self.start_btn = tk.Button(
-            bottom,
-            text="▶  Start",
-            command=self._on_start,
-            bg="#27ae60",
-            fg="white",
-            font=("Segoe UI", 12, "bold"),
-            width=16,
-            cursor="hand2",
-        )
+        self.start_btn = tk.Button(bottom, text="▶  Start", command=self._on_start, bg="#27ae60", fg="white", font=("Segoe UI", 12, "bold"), width=16, cursor="hand2")
         self.start_btn.pack(side=tk.LEFT, padx=(0, 12))
 
-        self.stop_btn = tk.Button(
-            bottom,
-            text="⏹  Stop",
-            command=self._on_stop,
-            bg="#e74c3c",
-            fg="white",
-            font=("Segoe UI", 12, "bold"),
-            width=16,
-            state=tk.DISABLED,
-            cursor="hand2",
-        )
+        self.stop_btn = tk.Button(bottom, text="⏹  Stop", command=self._on_stop, bg="#e74c3c", fg="white", font=("Segoe UI", 12, "bold"), width=16, state=tk.DISABLED, cursor="hand2")
         self.stop_btn.pack(side=tk.LEFT)
 
     def _load_defaults(self):
@@ -231,44 +188,45 @@ class Dashboard(tk.Tk):
                 self._log(f"Error loading default body: {e}", "error")
 
     def _load_smtp_auto(self):
-        email = self.config_manager.get("email", "")
-        if not email:
-            return
-        password = self.credential_manager.get_password(email) or ""
-        if not password:
-            return
-        server = self.config_manager.get("server", "smtp.gmail.com")
-        port = self.config_manager.get("port", 587)
-        account_str = f"{email}:{password}:{server}:{port}"
-        self.smtp_text.delete("1.0", tk.END)
-        self.smtp_text.insert(tk.END, account_str)
-        self._log(f"Auto-loaded SMTP: {email}")
+        try:
+            accounts = self.config_manager.get_accounts()
+            self._log(f"Auto-load: found {len(accounts)} account(s) in config")
+            if not accounts:
+                return
+            lines = []
+            for acc in accounts:
+                email = acc.get("email", "")
+                password = self.credential_manager.get_password(email) or ""
+                if not password:
+                    self._log(f"  Skipped {email}: no password found")
+                    continue
+                server = acc.get("server", "smtp.gmail.com")
+                port = acc.get("port", 587)
+                lines.append(f"{email}:{password}:{server}:{port}")
+            if lines:
+                self.smtp_text.delete("1.0", tk.END)
+                self.smtp_text.insert(tk.END, "\n".join(lines))
+                self._log(f"Auto-loaded {len(lines)} SMTP account(s)")
+        except Exception as e:
+            self._log(f"Error auto-loading SMTP: {e}", "error")
 
     def _check_first_run(self):
-        if not self.config_manager.has_config():
-            self.withdraw()
-            from emailsenderpro.setup_wizard import SetupWizard
-            SetupWizard(self, on_complete=self.deiconify)
+        try:
+            if not self.config_manager.get_accounts():
+                self._log("First launch detected. Opening setup wizard...")
+                from emailsenderpro.setup_wizard import SetupWizard
+                SetupWizard(self, on_complete=lambda: self._log("Setup complete."))
+        except Exception as e:
+            self._log(f"Error in first-run check: {e}", "error")
 
     def _browse_recipients(self):
-        path = filedialog.askopenfilename(
-            title="Select Recipients File",
-            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
-        )
+        path = filedialog.askopenfilename(title="Select Recipients File", filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
         if path:
             self.recipient_path.set(path)
             self._log(f"Selected recipients: {path}")
 
     def _browse_body(self):
-        path = filedialog.askopenfilename(
-            title="Select Body File",
-            filetypes=[
-                ("Text & HTML files", "*.txt *.html *.htm"),
-                ("Text files", "*.txt"),
-                ("HTML files", "*.html *.htm"),
-                ("All files", "*.*"),
-            ],
-        )
+        path = filedialog.askopenfilename(title="Select Body File", filetypes=[("Text & HTML files", "*.txt *.html *.htm"), ("Text files", "*.txt"), ("HTML files", "*.html *.htm"), ("All files", "*.*")])
         if path:
             self.body_file_path.set(path)
             try:
@@ -294,9 +252,8 @@ class Dashboard(tk.Tk):
         for p in paths:
             if p and p not in self.attachments_list.get(0, tk.END):
                 self.attachments_list.insert(tk.END, p)
-        count = self.attachments_list.size()
         if paths:
-            self._log(f"Attachments: {count} file(s)")
+            self._log(f"Attachments: {self.attachments_list.size()} file(s)")
 
     def _remove_attachment(self):
         sel = self.attachments_list.curselection()
@@ -307,26 +264,45 @@ class Dashboard(tk.Tk):
             messagebox.showinfo("Select First", "Click on a file in the list to select it, then click Remove.")
 
     def _load_from_config(self):
-        email = self.config_manager.get("email", "")
-        if not email:
-            messagebox.showinfo("No Config", "No saved configuration found.")
-            return
-        password = self.credential_manager.get_password(email) or ""
-        server = self.config_manager.get("server", "smtp.gmail.com")
-        port = self.config_manager.get("port", 587)
-        account_str = f"{email}:{password}:{server}:{port}"
-        self.smtp_text.delete("1.0", tk.END)
-        self.smtp_text.insert(tk.END, account_str)
-        self._log(f"Loaded account: {email}")
+        try:
+            accounts = self.config_manager.get_accounts()
+            self._log(f"Load from Config clicked. Found {len(accounts)} account(s) in config.")
+            if not accounts:
+                messagebox.showinfo("No Config", "No saved configuration found. Run the setup wizard first.")
+                return
+            lines = []
+            for acc in accounts:
+                email = acc.get("email", "")
+                password = self.credential_manager.get_password(email) or ""
+                self._log(f"  Account: {email} — password {'found' if password else 'NOT FOUND'}")
+                if not password:
+                    continue
+                server = acc.get("server", "smtp.gmail.com")
+                port = acc.get("port", 587)
+                lines.append(f"{email}:{password}:{server}:{port}")
+            if lines:
+                self.smtp_text.delete("1.0", tk.END)
+                self.smtp_text.insert(tk.END, "\n".join(lines))
+                self._log(f"Loaded {len(lines)} account(s) into SMTP field")
+            else:
+                messagebox.showwarning("No Passwords", "Accounts found but no passwords available. Re-enter them in Edit Config.")
+        except Exception as e:
+            self._log(f"Error loading config: {e}", "error")
 
     def _open_config_editor(self):
-        ConfigEditor(self, on_save=self._load_from_config)
+        try:
+            ConfigEditor(self, on_save=self._load_from_config)
+        except Exception as e:
+            self._log(f"Error opening config editor: {e}", "error")
 
     def _log(self, message, level="info"):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, message + "\n")
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        try:
+            self.log_text.config(state=tk.NORMAL)
+            self.log_text.insert(tk.END, message + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+        except Exception:
+            pass
         logger.log(getattr(logging, level.upper(), logging.INFO), message)
 
     def _on_progress(self, current: int, total: int) -> None:
@@ -381,7 +357,6 @@ class Dashboard(tk.Tk):
             messagebox.showwarning("No Recipients", "The file contains no valid email addresses.")
             return
 
-        # Collect attachments from listbox
         attachments = []
         for i in range(self.attachments_list.size()):
             p = self.attachments_list.get(i)

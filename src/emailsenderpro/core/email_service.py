@@ -1,4 +1,4 @@
-"""Core email delivery logic."""
+"""Core email delivery logic with per-campaign tracking."""
 import json
 import logging
 import random
@@ -12,13 +12,13 @@ from email import encoders
 from pathlib import Path
 from typing import Callable, List, Optional
 
-logger = logging.getLogger(__name__)
+from emailsenderpro.core.config_manager import CONFIG_DIR
 
-SENT_FILE = Path("sent.json")
+logger = logging.getLogger(__name__)
 
 
 class EmailService:
-    """Handles bulk email sending with rotation, delays, and resume support."""
+    """Handles bulk email sending with per-campaign resume support."""
 
     def __init__(
         self,
@@ -33,6 +33,7 @@ class EmailService:
         resume: bool = True,
         shuffle: bool = False,
         stop_event: Optional[threading.Event] = None,
+        campaign_name: str = "default",
     ):
         self.accounts = self._parse_accounts(accounts)
         self.subject = subject
@@ -44,10 +45,12 @@ class EmailService:
         self.dry_run = dry_run
         self.resume = resume
         self.shuffle = shuffle
+        self.stop_event = stop_event or threading.Event()
+        self.campaign_name = campaign_name or "default"
+        self.sent_file = CONFIG_DIR / "campaigns" / self.campaign_name / "sent.json"
         self.sent_emails = self._load_sent()
         self.log_callback: Optional[Callable[[str], None]] = None
         self.progress_callback: Optional[Callable[[int, int], None]] = None
-        self.stop_event = stop_event or threading.Event()
 
     def _parse_accounts(self, accounts: List[str]) -> List[dict]:
         parsed = []
@@ -63,10 +66,10 @@ class EmailService:
         return parsed
 
     def _load_sent(self) -> set:
-        if not self.resume or not SENT_FILE.exists():
+        if not self.resume or not self.sent_file.exists():
             return set()
         try:
-            with open(SENT_FILE, "r", encoding="utf-8") as f:
+            with open(self.sent_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return set(data.get("sent", []))
         except Exception:
@@ -75,7 +78,8 @@ class EmailService:
     def _save_sent(self, email: str) -> None:
         self.sent_emails.add(email)
         try:
-            with open(SENT_FILE, "w", encoding="utf-8") as f:
+            self.sent_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.sent_file, "w", encoding="utf-8") as f:
                 json.dump({"sent": list(self.sent_emails)}, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to save sent log: {e}")
@@ -84,7 +88,6 @@ class EmailService:
         self.log_callback = callback
 
     def set_progress_callback(self, callback: Callable[[int, int], None]) -> None:
-        """Callback(current_index, total_count) called after each email."""
         self.progress_callback = callback
 
     def _log(self, message: str, level: str = "info") -> None:
@@ -97,13 +100,14 @@ class EmailService:
             self.progress_callback(current, total)
 
     def send_bulk(self, recipients: List[str]) -> dict:
-        """Send emails to all recipients. Returns stats dict."""
         if self.shuffle:
             random.shuffle(recipients)
 
         stats = {"total": len(recipients), "sent": 0, "skipped": 0, "failed": 0, "stopped": False}
         account_idx = 0
         total = len(recipients)
+
+        self._log(f"Campaign: {self.campaign_name} | Resume: {self.resume} | Already sent in this campaign: {len(self.sent_emails)}")
 
         for i, recipient in enumerate(recipients):
             if self.stop_event.is_set():
@@ -112,7 +116,7 @@ class EmailService:
                 break
 
             if self.resume and recipient in self.sent_emails:
-                self._log(f"Skipping {recipient} (already sent)")
+                self._log(f"Skipping {recipient} (already sent in campaign '{self.campaign_name}')")
                 stats["skipped"] += 1
                 self._report_progress(i + 1, total)
                 continue
@@ -141,7 +145,6 @@ class EmailService:
         return stats
 
     def _interruptible_sleep(self, seconds: int) -> None:
-        """Sleep that can be interrupted by stop_event."""
         for _ in range(seconds):
             if self.stop_event.is_set():
                 break
