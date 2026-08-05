@@ -1,378 +1,434 @@
-#!/usr/bin/env python3
-"""Main application dashboard (email sender GUI)."""
-import json
-import random
+"""Main email sender GUI dashboard — listbox attachments + tooltips."""
+import logging
+import os
 import threading
-import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from pathlib import Path
 
+from emailsenderpro.config_editor import ConfigEditor
 from emailsenderpro.core.config_manager import ConfigManager
 from emailsenderpro.core.credential_manager import CredentialManager
-from emailsenderpro.services.excel_service import load_emails
 from emailsenderpro.core.email_service import EmailService
+from emailsenderpro.services.excel_service import load_emails
+
+logger = logging.getLogger(__name__)
 
 
 class Dashboard(tk.Tk):
-    """Primary application window for sending emails."""
+    """Main application dashboard with listbox attachments and help tooltips."""
 
     def __init__(self):
         super().__init__()
-        self.title("Email Sender Pro")
-        self.geometry("950x850")
-        self.minsize(800, 700)
+        self.title("EmailSenderPro - Dashboard")
+        self.geometry("1100x780")
+        self.minsize(1000, 700)
 
-        root_dir = Path(__file__).resolve().parent.parent.parent
-        default_csv = root_dir / "examples" / "emails.example.csv"
-        default_body = root_dir / "examples" / "body.txt"
-
-        self.file_path = tk.StringVar(value=str(default_csv) if default_csv.exists() else "")
-        self.column_name = tk.StringVar(value="email")
-        self.subject = tk.StringVar()
-        self.body_text = tk.StringVar()
-        self.body_file_path = tk.StringVar(value=str(default_body) if default_body.exists() else "")
-        self.delay_min = tk.IntVar(value=300)
-        self.delay_max = tk.IntVar(value=600)
-        self.shuffle_var = tk.BooleanVar(value=True)
-        self.html_var = tk.BooleanVar(value=False)
-        self.dry_run_var = tk.BooleanVar(value=False)
-        self.resume_var = tk.BooleanVar(value=True)
-        self.rotation_mode = tk.StringVar(value="round_robin")
-
-        self.attachments: list[str] = []
-        self.sent_file = "sent.json"
-        self.is_running = False
-        self.stop_requested = False
-
-        self.body_file_path.trace_add("write", self._auto_detect_html)
+        self.config_manager = ConfigManager()
+        self.credential_manager = CredentialManager()
+        self.sending_thread = None
+        self.stop_event = threading.Event()
 
         self._build_ui()
-        self._load_account_from_config()
+        self._load_defaults()
+        self._load_smtp_auto()
+        self._check_first_run()
 
-    # --- Le reste de la classe reste inchangé ---
     def _build_ui(self):
-        canvas = tk.Canvas(self)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        scrollable = ttk.Frame(canvas)
+        self.columnconfigure(0, weight=3)
+        self.columnconfigure(1, weight=2)
+        self.rowconfigure(0, weight=1)
 
-        scrollable.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        # ========== LEFT COLUMN ==========
+        left = tk.Frame(self, padx=15, pady=10)
+        left.grid(row=0, column=0, sticky="nsew")
+        left.columnconfigure(0, weight=1)
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Header
+        tk.Label(
+            left,
+            text="EmailSenderPro Dashboard",
+            font=("Segoe UI", 17, "bold"),
+            fg="#2c3e50",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        f = scrollable
-        r = 0
+        # Recipients
+        r_frame = tk.LabelFrame(left, text="Recipients", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
+        r_frame.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        r_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(f, text="Email file (CSV / Excel):", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(10, 2), padx=10
+        self.recipient_path = tk.StringVar()
+        tk.Entry(r_frame, textvariable=self.recipient_path, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="ew", ipady=2)
+        tk.Button(r_frame, text="Browse", command=self._browse_recipients, width=8).grid(row=0, column=1, padx=(5, 0))
+
+        # Message
+        m_frame = tk.LabelFrame(left, text="Message", font=("Segoe UI", 9, "bold"), padx=8, pady=6)
+        m_frame.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        m_frame.columnconfigure(1, weight=1)
+
+        # Subject
+        tk.Label(m_frame, text="Subject:", font=("Segoe UI", 9), anchor="w").grid(row=0, column=0, sticky="w")
+        self.subject_var = tk.StringVar()
+        tk.Entry(m_frame, textvariable=self.subject_var, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="ew", ipady=2, pady=(0, 4))
+
+        # Body file
+        tk.Label(m_frame, text="Body file:", font=("Segoe UI", 9), anchor="w").grid(row=1, column=0, sticky="w")
+        bf = tk.Frame(m_frame)
+        bf.grid(row=1, column=1, sticky="ew", pady=(0, 4))
+        bf.columnconfigure(0, weight=1)
+        self.body_file_path = tk.StringVar()
+        self.body_file_path.trace_add("write", self._auto_detect_html)
+        tk.Entry(bf, textvariable=self.body_file_path, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="ew", ipady=2)
+        tk.Button(bf, text="Browse", command=self._browse_body, width=8).grid(row=0, column=1, padx=(5, 0))
+
+        # Body text
+        tk.Label(m_frame, text="Or type / edit body here:", font=("Segoe UI", 8), fg="#7f8c8d", anchor="w").grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        self.body_text = scrolledtext.ScrolledText(
+            m_frame, height=6, font=("Segoe UI", 10), wrap=tk.WORD, relief=tk.SUNKEN, bd=1
         )
-        r += 1
-        ttk.Entry(f, textvariable=self.file_path, width=55).grid(row=r, column=0, sticky="we", padx=10)
-        ttk.Button(f, text="Browse", command=self._browse_file).grid(row=r, column=1, padx=5)
-        r += 1
+        self.body_text.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 5))
 
-        ttk.Label(f, text="Column name (default 'email'):").grid(row=r, column=0, sticky="w", padx=10)
-        r += 1
-        ttk.Entry(f, textvariable=self.column_name, width=30).grid(row=r, column=0, sticky="w", padx=10)
-        r += 1
+        # Attachments — LISTBOX STYLE
+        a_frame = tk.LabelFrame(left, text="Attachments", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
+        a_frame.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        a_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(f, text="Subject:", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(15, 2), padx=10
+        self.attachments_list = tk.Listbox(a_frame, height=3, font=("Segoe UI", 9), selectmode=tk.SINGLE)
+        self.attachments_list.grid(row=0, column=0, rowspan=2, sticky="nsew", pady=(0, 4))
+
+        ab = tk.Frame(a_frame)
+        ab.grid(row=0, column=1, sticky="n", padx=(8, 0))
+        tk.Button(ab, text="Add", command=self._add_attachment, width=8).pack(pady=(0, 4))
+        tk.Button(ab, text="Remove", command=self._remove_attachment, width=8).pack()
+
+        # SMTP Accounts
+        s_frame = tk.LabelFrame(left, text="SMTP Accounts", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
+        s_frame.grid(row=4, column=0, sticky="ew", pady=(0, 6))
+        s_frame.columnconfigure(0, weight=1)
+
+        tk.Label(s_frame, text="Format: email:password:server:port", font=("Segoe UI", 8), fg="#7f8c8d").grid(row=0, column=0, columnspan=3, sticky="w")
+        self.smtp_text = scrolledtext.ScrolledText(s_frame, height=3, font=("Consolas", 9))
+        self.smtp_text.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(2, 4))
+
+        sb = tk.Frame(s_frame)
+        sb.grid(row=2, column=0, columnspan=3, sticky="w")
+        tk.Button(sb, text="Load from Config", command=self._load_from_config, width=13).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Button(sb, text="Clear", command=lambda: self.smtp_text.delete("1.0", tk.END), width=8).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Button(sb, text="Edit Config", command=self._open_config_editor, width=10).pack(side=tk.LEFT)
+
+        # Options
+        o_frame = tk.LabelFrame(left, text="Options", font=("Segoe UI", 9, "bold"), padx=8, pady=5)
+        o_frame.grid(row=5, column=0, sticky="ew", pady=(0, 4))
+
+        # Delays
+        df = tk.Frame(o_frame)
+        df.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(df, text="Min delay (s):", font=("Segoe UI", 9), width=11, anchor="w").pack(side=tk.LEFT)
+        self.min_delay_var = tk.StringVar(value="300")
+        tk.Entry(df, textvariable=self.min_delay_var, width=7, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(df, text="Max delay (s):", font=("Segoe UI", 9), width=11, anchor="w").pack(side=tk.LEFT)
+        self.max_delay_var = tk.StringVar(value="600")
+        tk.Entry(df, textvariable=self.max_delay_var, width=7, font=("Segoe UI", 9)).pack(side=tk.LEFT)
+
+        # Checkboxes with tooltips
+        cf = tk.Frame(o_frame)
+        cf.pack(fill=tk.X, pady=(3, 0))
+
+        self.html_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(cf, text="HTML", variable=self.html_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.dry_run_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(cf, text="Dry Run", variable=self.dry_run_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.resume_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(cf, text="Resume", variable=self.resume_var, font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.shuffle_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(cf, text="Shuffle", variable=self.shuffle_var, font=("Segoe UI", 9)).pack(side=tk.LEFT)
+
+        # Tooltips row
+        tf = tk.Frame(o_frame)
+        tf.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(tf, text="HTML = formatted email (bold, colors, links)", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Dry Run = simulate sending without real delivery", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Resume = skip emails already sent (saved in sent.json)", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(tf, text="Shuffle = randomize recipient order", font=("Segoe UI", 7), fg="#95a5a6").pack(side=tk.LEFT)
+
+        # ========== RIGHT COLUMN ==========
+        right = tk.Frame(self, padx=10, pady=10)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        # Progress
+        p_frame = tk.LabelFrame(right, text="Progress", font=("Segoe UI", 9, "bold"), padx=10, pady=8)
+        p_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        p_frame.columnconfigure(0, weight=1)
+
+        self.progress_var = tk.DoubleVar(value=0)
+        ttk.Progressbar(p_frame, variable=self.progress_var, maximum=100).grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        self.progress_label = tk.Label(p_frame, text="Ready — 0 / 0 emails", font=("Segoe UI", 9), fg="#7f8c8d")
+        self.progress_label.grid(row=1, column=0, sticky="w")
+        tk.Label(p_frame, text="Green = sent | Grey = remaining | Blue = current", font=("Segoe UI", 8), fg="#95a5a6").grid(row=2, column=0, sticky="w", pady=(2, 0))
+
+        # Logs
+        l_frame = tk.LabelFrame(right, text="Logs", font=("Segoe UI", 9, "bold"), padx=10, pady=8)
+        l_frame.grid(row=1, column=0, sticky="nsew")
+        l_frame.rowconfigure(0, weight=1)
+        l_frame.columnconfigure(0, weight=1)
+
+        self.log_text = scrolledtext.ScrolledText(
+            l_frame, height=18, font=("Consolas", 9), state=tk.DISABLED, wrap=tk.WORD
         )
-        r += 1
-        ttk.Entry(f, textvariable=self.subject, width=60).grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
-        r += 1
+        self.log_text.grid(row=0, column=0, sticky="nsew")
 
-        ttk.Label(f, text="Message body:", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(15, 2), padx=10
+        # ========== BOTTOM ACTION BAR ==========
+        bottom = tk.Frame(self, padx=15, pady=12, bg="#ecf0f1")
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew")
+
+        self.start_btn = tk.Button(
+            bottom,
+            text="▶  Start",
+            command=self._on_start,
+            bg="#27ae60",
+            fg="white",
+            font=("Segoe UI", 12, "bold"),
+            width=16,
+            cursor="hand2",
         )
-        r += 1
-        ttk.Entry(f, textvariable=self.body_text, width=60).grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
-        r += 1
-        ttk.Label(f, text="OR load from .txt / .html file:").grid(row=r, column=0, sticky="w", padx=10)
-        r += 1
-        ttk.Entry(f, textvariable=self.body_file_path, width=55).grid(row=r, column=0, sticky="we", padx=10)
-        ttk.Button(f, text="Browse", command=self._browse_body).grid(row=r, column=1, padx=5)
-        r += 1
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 12))
 
-        ttk.Label(f, text="Attachments:", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(15, 2), padx=10
+        self.stop_btn = tk.Button(
+            bottom,
+            text="⏹  Stop",
+            command=self._on_stop,
+            bg="#e74c3c",
+            fg="white",
+            font=("Segoe UI", 12, "bold"),
+            width=16,
+            state=tk.DISABLED,
+            cursor="hand2",
         )
-        r += 1
-        af = ttk.Frame(f)
-        af.grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
-        self.attach_list = tk.Listbox(af, height=3, width=60)
-        self.attach_list.pack(side="left", fill="both", expand=True)
-        ttk.Button(af, text="Add", command=self._add_attach).pack(side="left", padx=5)
-        ttk.Button(af, text="Remove", command=self._remove_attach).pack(side="left")
-        r += 1
+        self.stop_btn.pack(side=tk.LEFT)
 
-        ttk.Label(f, text="SMTP Accounts (email:password:server:port)", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(15, 2), padx=10
+    def _load_defaults(self):
+        examples_dir = Path(__file__).parent.parent.parent / "examples"
+        default_emails = examples_dir / "emails.example.csv"
+        if default_emails.exists():
+            self.recipient_path.set(str(default_emails))
+            self._log(f"Default recipients: {default_emails.name}")
+
+        default_body = examples_dir / "body.txt"
+        if default_body.exists():
+            self.body_file_path.set(str(default_body))
+            try:
+                with open(default_body, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.body_text.delete("1.0", tk.END)
+                self.body_text.insert(tk.END, content)
+                self._log(f"Default body: {default_body.name}")
+            except Exception as e:
+                self._log(f"Error loading default body: {e}", "error")
+
+    def _load_smtp_auto(self):
+        email = self.config_manager.get("email", "")
+        if not email:
+            return
+        password = self.credential_manager.get_password(email) or ""
+        if not password:
+            return
+        server = self.config_manager.get("server", "smtp.gmail.com")
+        port = self.config_manager.get("port", 587)
+        account_str = f"{email}:{password}:{server}:{port}"
+        self.smtp_text.delete("1.0", tk.END)
+        self.smtp_text.insert(tk.END, account_str)
+        self._log(f"Auto-loaded SMTP: {email}")
+
+    def _check_first_run(self):
+        if not self.config_manager.has_config():
+            self.withdraw()
+            from emailsenderpro.setup_wizard import SetupWizard
+            SetupWizard(self, on_complete=self.deiconify)
+
+    def _browse_recipients(self):
+        path = filedialog.askopenfilename(
+            title="Select Recipients File",
+            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
         )
-        r += 1
-        ttk.Label(f, text="Example: user@gmail.com:abcd efgh ijkl mnop:smtp.gmail.com:587", foreground="gray").grid(
-            row=r, column=0, sticky="w", padx=10
+        if path:
+            self.recipient_path.set(path)
+            self._log(f"Selected recipients: {path}")
+
+    def _browse_body(self):
+        path = filedialog.askopenfilename(
+            title="Select Body File",
+            filetypes=[
+                ("Text & HTML files", "*.txt *.html *.htm"),
+                ("Text files", "*.txt"),
+                ("HTML files", "*.html *.htm"),
+                ("All files", "*.*"),
+            ],
         )
-        r += 1
-        self.accounts_text = scrolledtext.ScrolledText(f, height=4, width=70)
-        self.accounts_text.grid(row=r, column=0, columnspan=2, sticky="we", padx=10)
-        r += 1
-
-        rot = ttk.Frame(f)
-        rot.grid(row=r, column=0, columnspan=2, sticky="w", padx=10, pady=5)
-        ttk.Label(rot, text="Rotation:").pack(side="left")
-        ttk.Radiobutton(rot, text="Sequential", variable=self.rotation_mode, value="round_robin").pack(side="left", padx=5)
-        ttk.Radiobutton(rot, text="Random", variable=self.rotation_mode, value="random").pack(side="left", padx=5)
-        r += 1
-
-        ttk.Label(f, text="Options", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(20, 5), padx=10
-        )
-        r += 1
-        ttk.Label(f, text="Min delay (s):").grid(row=r, column=0, sticky="w", padx=10)
-        ttk.Spinbox(f, from_=0, to=3600, textvariable=self.delay_min, width=10).grid(
-            row=r, column=0, sticky="w", padx=(120, 0)
-        )
-        r += 1
-        ttk.Label(f, text="Max delay (s):").grid(row=r, column=0, sticky="w", padx=10)
-        ttk.Spinbox(f, from_=0, to=3600, textvariable=self.delay_max, width=10).grid(
-            row=r, column=0, sticky="w", padx=(120, 0)
-        )
-        r += 1
-        ttk.Checkbutton(f, text="Shuffle recipients", variable=self.shuffle_var).grid(row=r, column=0, sticky="w", padx=10)
-        ttk.Checkbutton(f, text="HTML content", variable=self.html_var).grid(row=r, column=1, sticky="w")
-        r += 1
-        ttk.Checkbutton(f, text="Dry Run (simulation)", variable=self.dry_run_var).grid(row=r, column=0, sticky="w", padx=10)
-        ttk.Checkbutton(f, text="Resume (skip already sent)", variable=self.resume_var).grid(row=r, column=1, sticky="w")
-        r += 1
-
-        bf = ttk.Frame(f)
-        bf.grid(row=r, column=0, columnspan=2, pady=20)
-        self.btn_start = ttk.Button(bf, text="Start", command=self._start)
-        self.btn_start.pack(side="left", padx=5)
-        ttk.Button(bf, text="Stop", command=self._stop).pack(side="left", padx=5)
-        r += 1
-
-        ttk.Label(f, text="Logs:", font=("Segoe UI", 10, "bold")).grid(
-            row=r, column=0, sticky="w", pady=(15, 5), padx=10
-        )
-        r += 1
-        self.log_box = scrolledtext.ScrolledText(f, height=12, state="disabled", wrap=tk.WORD)
-        self.log_box.grid(row=r, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
-        r += 1
-
-        self.progress = ttk.Progressbar(f, orient="horizontal", length=500, mode="determinate")
-        self.progress.grid(row=r, column=0, columnspan=2, sticky="we", padx=10, pady=(0, 10))
-
-        f.columnconfigure(0, weight=1)
-        self.log("Ready. Load a file and click Start.")
+        if path:
+            self.body_file_path.set(path)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.body_text.delete("1.0", tk.END)
+                self.body_text.insert(tk.END, content)
+                self._log(f"Loaded body: {path}")
+            except Exception as e:
+                self._log(f"Error reading body: {e}", "error")
 
     def _auto_detect_html(self, *args):
         path = self.body_file_path.get().strip().lower()
-        if not path:
-            return
         if path.endswith((".html", ".htm")):
             self.html_var.set(True)
-            self.log("HTML file detected — HTML mode enabled.")
+            self._log("HTML mode enabled.")
         elif path.endswith(".txt"):
             self.html_var.set(False)
-            self.log("Text file detected — Plain text mode enabled.")
+            self._log("Plain text mode enabled.")
 
-    def log(self, message: str):
-        self.log_box.config(state="normal")
-        self.log_box.insert(tk.END, f"{message}\n")
-        self.log_box.see(tk.END)
-        self.log_box.config(state="disabled")
+    def _add_attachment(self):
+        paths = filedialog.askopenfilenames(title="Select Attachments")
+        for p in paths:
+            if p and p not in self.attachments_list.get(0, tk.END):
+                self.attachments_list.insert(tk.END, p)
+        count = self.attachments_list.size()
+        if paths:
+            self._log(f"Attachments: {count} file(s)")
 
-    def _log_async(self, message: str):
-        self.after(0, lambda: self.log(message))
+    def _remove_attachment(self):
+        sel = self.attachments_list.curselection()
+        if sel:
+            self.attachments_list.delete(sel[0])
+            self._log(f"Removed attachment. Remaining: {self.attachments_list.size()}")
+        else:
+            messagebox.showinfo("Select First", "Click on a file in the list to select it, then click Remove.")
 
-    def _set_progress(self, value: int):
-        self.after(0, lambda: self.progress.config(value=value))
-
-    def _finish_async(self, message: str | None = None):
-        self.after(0, lambda: self._finish(message))
-
-    def _browse_file(self):
-        path = filedialog.askopenfilename(filetypes=[("CSV/Excel", "*.csv *.xlsx *.xls")])
-        if path:
-            self.file_path.set(path)
-
-    def _browse_body(self):
-        path = filedialog.askopenfilename(filetypes=[("Text/HTML", "*.txt *.html *.htm")])
-        if path:
-            self.body_file_path.set(path)
-
-    def _add_attach(self):
-        files = filedialog.askopenfilenames(title="Select attachments")
-        count = 0
-        for f in files:
-            if f not in self.attachments:
-                self.attachments.append(f)
-                self.attach_list.insert(tk.END, Path(f).name)
-                count += 1
-        if count:
-            self.log(f"Added {count} attachment(s).")
-
-    def _remove_attach(self):
-        selection = self.attach_list.curselection()
-        if selection:
-            idx = selection[0]
-            self.attach_list.delete(idx)
-            del self.attachments[idx]
-            self.log("Attachment removed.")
-
-    def _get_body(self) -> str | None:
-        if self.body_file_path.get().strip():
-            try:
-                with open(self.body_file_path.get(), "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as exc:
-                self.log(f"Error reading body file: {exc}")
-                return None
-        return self.body_text.get().strip()
-
-    def _parse_accounts(self) -> list[dict]:
-        lines = self.accounts_text.get("1.0", tk.END).strip().splitlines()
-        accounts = []
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(":")
-            if len(parts) >= 2:
-                accounts.append({
-                    "user": parts[0].strip(),
-                    "password": parts[1].strip(),
-                    "server": parts[2].strip() if len(parts) > 2 else "smtp.gmail.com",
-                    "port": int(parts[3].strip()) if len(parts) > 3 else 587,
-                })
-        return accounts
-
-    def _load_sent(self) -> set[str]:
-        if Path(self.sent_file).exists():
-            try:
-                with open(self.sent_file, "r", encoding="utf-8") as f:
-                    return set(json.load(f).get("sent", []))
-            except Exception:
-                return set()
-        return set()
-
-    def _save_sent(self, sent_set: set[str]):
-        try:
-            with open(self.sent_file, "w", encoding="utf-8") as f:
-                json.dump({"sent": list(sent_set)}, f, indent=2)
-        except Exception as exc:
-            self._log_async(f"Error saving sent list: {exc}")
-
-    def _load_account_from_config(self):
-        email = ConfigManager.get_email()
-        password = CredentialManager.get_password()
-        if email and password:
-            line = f"{email}:{password}:smtp.gmail.com:587"
-            self.accounts_text.insert(tk.END, line + "\n")
-            self.log(f"Loaded account from config: {email}")
-
-    def _start(self):
-        if self.is_running:
+    def _load_from_config(self):
+        email = self.config_manager.get("email", "")
+        if not email:
+            messagebox.showinfo("No Config", "No saved configuration found.")
             return
-        if not self.file_path.get():
-            messagebox.showerror("Error", "Select an email file.")
+        password = self.credential_manager.get_password(email) or ""
+        server = self.config_manager.get("server", "smtp.gmail.com")
+        port = self.config_manager.get("port", 587)
+        account_str = f"{email}:{password}:{server}:{port}"
+        self.smtp_text.delete("1.0", tk.END)
+        self.smtp_text.insert(tk.END, account_str)
+        self._log(f"Loaded account: {email}")
+
+    def _open_config_editor(self):
+        ConfigEditor(self, on_save=self._load_from_config)
+
+    def _log(self, message, level="info"):
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, message + "\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+        logger.log(getattr(logging, level.upper(), logging.INFO), message)
+
+    def _on_progress(self, current: int, total: int) -> None:
+        if total > 0:
+            pct = (current / total) * 100
+            self.progress_var.set(pct)
+            self.progress_label.config(text=f"Sending... {current} / {total} ({pct:.0f}%)", fg="#3498db")
+        else:
+            self.progress_label.config(text="Ready", fg="#7f8c8d")
+
+    def _on_start(self):
+        if self.sending_thread and self.sending_thread.is_alive():
+            messagebox.showwarning("Busy", "A sending operation is already in progress.")
             return
-        if not self.subject.get().strip():
-            messagebox.showerror("Error", "Enter a subject.")
+
+        recipient_file = self.recipient_path.get().strip()
+        if not recipient_file:
+            messagebox.showwarning("Missing File", "Please select a recipients file.")
             return
-        body = self._get_body()
+
+        subject = self.subject_var.get().strip()
+        if not subject:
+            messagebox.showwarning("Missing Subject", "Please enter an email subject.")
+            return
+
+        body = self.body_text.get("1.0", tk.END).strip()
         if not body:
-            messagebox.showerror("Error", "Enter a message body or load a file.")
+            messagebox.showwarning("Missing Body", "Please enter an email body.")
             return
 
-        accounts = self._parse_accounts()
-        if not accounts:
-            messagebox.showerror("Error", "No SMTP accounts configured.\nAdd accounts or run setup.")
+        accounts_raw = self.smtp_text.get("1.0", tk.END).strip()
+        if not accounts_raw:
+            messagebox.showwarning("Missing Accounts", "Please enter at least one SMTP account.")
             return
 
-        self.is_running = True
-        self.stop_requested = False
-        self.btn_start.config(state="disabled", text="Running...")
-        self._set_progress(0)
-        self.log("Starting send process...")
+        accounts = [line.strip() for line in accounts_raw.splitlines() if line.strip()]
 
-        thread = threading.Thread(target=self._run, args=(accounts, body), daemon=True)
-        thread.start()
-
-    def _stop(self):
-        if self.is_running:
-            self.stop_requested = True
-            self.log("Stop requested. Finishing current email...")
-
-    def _finish(self, message: str | None = None):
-        self.is_running = False
-        self.btn_start.config(state="normal", text="Start")
-        if message:
-            self.log(message)
-        self.log("Ready for new send.")
-
-    def _run(self, accounts: list[dict], body: str):
         try:
-            emails = load_emails(self.file_path.get(), self.column_name.get() or None)
-            if not emails:
-                self._finish_async("No emails loaded.")
-                return
+            min_delay = int(self.min_delay_var.get())
+            max_delay = int(self.max_delay_var.get())
+        except ValueError:
+            messagebox.showwarning("Invalid Delay", "Delay values must be integers.")
+            return
 
-            sent = set()
-            if self.resume_var.get():
-                sent = self._load_sent()
-                emails = [e for e in emails if e not in sent]
-                self._log_async(f"Resume: {len(sent)} already sent, {len(emails)} remaining.")
+        try:
+            recipients = load_emails(recipient_file)
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to load recipients: {e}")
+            return
 
-            if not emails:
-                self._finish_async("All emails already sent.")
-                return
+        if not recipients:
+            messagebox.showwarning("No Recipients", "The file contains no valid email addresses.")
+            return
 
-            if self.shuffle_var.get():
-                random.shuffle(emails)
+        # Collect attachments from listbox
+        attachments = []
+        for i in range(self.attachments_list.size()):
+            p = self.attachments_list.get(i)
+            if os.path.exists(p):
+                attachments.append(p)
 
-            total = len(emails)
-            service = EmailService(accounts, self.rotation_mode.get())
-            success = 0
-            failed = 0
+        self.stop_event.clear()
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.progress_var.set(0)
+        self.progress_label.config(text=f"0 / {len(recipients)} emails", fg="#3498db")
 
-            for idx, email in enumerate(emails):
-                if self.stop_requested:
-                    self._log_async("Interrupted by user.")
-                    break
+        service = EmailService(
+            accounts=accounts, subject=subject, body=body,
+            is_html=self.html_var.get(), attachments=attachments,
+            min_delay=min_delay, max_delay=max_delay,
+            dry_run=self.dry_run_var.get(), resume=self.resume_var.get(),
+            shuffle=self.shuffle_var.get(), stop_event=self.stop_event,
+        )
+        service.set_log_callback(lambda msg: self.after(0, self._log, msg))
+        service.set_progress_callback(lambda c, t: self.after(0, self._on_progress, c, t))
 
-                ok = service.send(
-                    email,
-                    self.subject.get(),
-                    body,
-                    self.html_var.get(),
-                    self.attachments,
-                    self.dry_run_var.get(),
-                )
-                if ok:
-                    success += 1
-                    if not self.dry_run_var.get():
-                        sent.add(email)
-                        self._save_sent(sent)
-                else:
-                    failed += 1
+        self.sending_thread = threading.Thread(target=self._send_worker, args=(service, recipients), daemon=True)
+        self.sending_thread.start()
 
-                progress = int(((idx + 1) / total) * 100)
-                self._set_progress(progress)
+    def _send_worker(self, service, recipients):
+        try:
+            stats = service.send_bulk(recipients)
+            self.after(0, self._on_send_complete, stats)
+        except Exception as e:
+            self.after(0, self._log, f"Unexpected error: {e}", "error")
+            self.after(0, self._reset_ui)
 
-                if idx < total - 1 and not self.dry_run_var.get() and not self.stop_requested:
-                    delay = random.randint(self.delay_min.get(), self.delay_max.get())
-                    self._log_async(f"Waiting {delay}s before next send...")
-                    time.sleep(delay)
+    def _on_send_complete(self, stats):
+        self._reset_ui()
+        mode = "Dry Run" if self.dry_run_var.get() else "Send"
+        status = " (stopped)" if stats.get("stopped") else ""
+        self._log(f"{mode} complete{status}! Sent: {stats['sent']}, Skipped: {stats['skipped']}, Failed: {stats['failed']}")
+        messagebox.showinfo("Complete", f"Sent: {stats['sent']}\nSkipped: {stats['skipped']}\nFailed: {stats['failed']}")
 
-            self._log_async(f"Finished. Success: {success}, Failed: {failed}")
-        except Exception as exc:
-            self._log_async(f"Critical error: {exc}")
-        finally:
-            self._finish_async()
+    def _on_stop(self):
+        self.stop_event.set()
+        self._log("Stop requested. Aborting after current email...")
+        self.stop_btn.config(state=tk.DISABLED)
+
+    def _reset_ui(self):
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.progress_var.set(100 if self.progress_var.get() > 0 else 0)
+        self.progress_label.config(text="Ready — 0 / 0 emails", fg="#7f8c8d")

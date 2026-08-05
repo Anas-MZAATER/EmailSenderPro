@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-EmailSenderPro Launcher
-Handles PYTHONPATH setup automatically so the app works from anywhere.
+EmailSenderPro - Cross-platform launcher
+Adds src/ to PYTHONPATH before importing the package.
 """
 import sys
 from pathlib import Path
 
-# Add src/ to Python path
-project_root = Path(__file__).parent.resolve()
-src_path = project_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+# Add src/ to PYTHONPATH so 'emailsenderpro' can be imported
+PROJECT_ROOT = Path(__file__).parent.resolve()
+SRC_PATH = PROJECT_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
 
 from emailsenderpro.app import main
 

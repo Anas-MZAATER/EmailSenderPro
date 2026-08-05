@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square&logo=open-source-initiative&logoColor=white)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-6e7781?style=flat-square&logo=windows-terminal&logoColor=white)]()
-[![Version](https://img.shields.io/badge/Version-v1.0.0-0969da?style=flat-square&logo=git&logoColor=white)]()
+[![Version](https://img.shields.io/badge/Version-v2.0.0-0969da?style=flat-square&logo=git&logoColor=white)]()
 [![Status](https://img.shields.io/badge/Status-Active-238636?style=flat-square&logo=checkmarx&logoColor=white)]()
 
 </div>
@@ -221,14 +221,14 @@ To maximize deliverability and avoid the spam folder, follow these rules:
 
 ### 2. Avoid Spam Trigger Words
 
-**NEVER use in the subject or body:**
+**Words to Avoid (Spam Triggers):**
 ```
 FREE, URGENT, ACT NOW, LIMITED TIME, CONGRATULATIONS,
 WINNER, CASH, $$$, 100% FREE, CLICK HERE, BUY NOW,
 MAKE MONEY, NO OBLIGATION, RISK FREE, ACT IMMEDIATELY
 ```
 
-**Use instead:**
+**Recommended Alternatives:**
 ```
 Invitation, Update, Information, Regarding, Opportunity,
 Collaboration, Follow-up, Introduction, Proposal
