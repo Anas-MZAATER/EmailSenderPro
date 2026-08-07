@@ -75,6 +75,45 @@ Whether you're sending job applications, newsletters, customer communications, o
 
 ---
 
+## 📸 Screenshots
+
+### 🧙 First-Run Setup
+
+Configure your Gmail account securely during the first launch using a Gmail App Password.
+
+<p align="center">
+  <img src="docs/images/first-run-setup.png" alt="First-Run Setup" width="70%">
+</p>
+
+---
+
+### 📊 Dashboard
+
+The main workspace for managing recipients, composing emails, adding attachments, configuring campaign settings, and monitoring progress in real time.
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Dashboard" width="90%">
+</p>
+
+---
+
+### ⚙️ SMTP Account Manager
+
+Manage multiple SMTP accounts, securely store credentials, and switch between configurations.
+
+<p align="center">
+  <img src="docs/images/smtp-account-manager.png" alt="SMTP Account Manager" width="70%">
+</p>
+
+---
+
+| HTML Campaign Result | Plain Text Campaign Result |
+|---|---|
+| Professional HTML notification sent after a successful campaign. | Lightweight plain-text notification for users who prefer text-only emails. |
+| <img src="docs/images/campaign-success-html-email.png" alt="HTML Campaign Result" width="100%"> | <img src="docs/images/campaign-success-text-email.png" alt="Plain Text Campaign Result" width="100%"> |
+
+---
+
 ## 🏗 Architecture
 
 ```mermaid
